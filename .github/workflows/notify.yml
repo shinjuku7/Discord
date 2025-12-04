@@ -19,12 +19,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install -r tukorea_notice_bot/requirements.txt
 
       - name: Run notifier
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: python main.py
+        run: python -m tukorea_notice_bot.main
 
       - name: Commit state.json if changed
         if: ${{ always() }}
