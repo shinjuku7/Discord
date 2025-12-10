@@ -1,51 +1,79 @@
-"""State management for previously seen notices."""
+# state.py
+"""이미 본 공지 ID들을 관리하는 모듈."""
 
 from __future__ import annotations
 
 import json
 import logging
-import os
-from typing import Iterable, Set
+from pathlib import Path
+from typing import Iterable, Collection, List, Set
 
 from .models import Notice
 
 LOGGER = logging.getLogger(__name__)
 
+STATE_PATH = Path(__file__).with_name("state.json")
 
-def load_seen_ids(path: str = "state.json") -> Set[str]:
-    """Load seen notice IDs from a JSON file."""
-    if not os.path.exists(path):
-        return set()
+
+def load_seen_ids() -> Set[str]:
+    """state.json에서 이미 본 공지 ID 집합을 읽어옵니다."""
     try:
-        with open(path, "r", encoding="utf-8") as fp:
-            data = json.load(fp)
+        raw = STATE_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
+        LOGGER.info("state.json 없음 -> 빈 seen_ids로 시작")
         return set()
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid state file: {path}") from exc
 
-    seen_ids = data.get("seen_ids", [])
-    return {str(item) for item in seen_ids}
-
-
-def save_seen_ids(seen_ids: Set[str], path: str = "state.json", max_size: int = 500) -> None:
-    """Persist seen IDs to disk, limiting the size of the list."""
     try:
-        max_size_int = int(max_size)
-    except (TypeError, ValueError):
-        LOGGER.warning("Invalid max_size %s, falling back to 500", max_size)
-        max_size_int = 500
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        LOGGER.warning("state.json 파싱 실패 -> 초기화")
+        return set()
 
-    ordered_ids = sorted(seen_ids, reverse=True)[:max_size_int]
-    payload = {"seen_ids": ordered_ids}
-
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fp:
-        json.dump(payload, fp, ensure_ascii=False, indent=2)
+    ids = data.get("seen_ids", [])
+    # 전부 문자열로 맞추기
+    return {str(x).strip() for x in ids}
 
 
-def diff_new_notices(notices: list[Notice], seen_ids: Set[str]) -> list[Notice]:
-    """Return notices that are not in the seen_id set, oldest first."""
-    new_notices = [notice for notice in notices if notice.id not in seen_ids]
-    return sorted(new_notices, key=lambda n: (n.date, n.id))
+def save_seen_ids(seen_ids: Iterable[str], max_size: int = 100) -> None:
+    """seen_ids를 state.json에 저장합니다. 너무 많으면 최신 ID 위주로 자릅니다."""
+    ids_set = {str(x).strip() for x in seen_ids}
 
+    # 숫자로 정렬이 가능하면 숫자 기준 내림차순
+    try:
+        sorted_ids = sorted(ids_set, key=lambda x: int(x), reverse=True)
+    except ValueError:
+        sorted_ids = sorted(ids_set, reverse=True)
+
+    trimmed = sorted_ids[:max_size]
+
+    data = {"seen_ids": trimmed}
+    STATE_PATH.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    LOGGER.info("state.json 저장 완료, 총 %d개 id", len(trimmed))
+
+
+def diff_new_notices(
+    notices: List[Notice],
+    seen_ids: Collection[str],
+) -> List[Notice]:
+    """공지 리스트에서 '새로운' 공지만 골라냅니다."""
+    seen = {str(x).strip() for x in seen_ids}
+
+    # 아직 seen_ids에 없는 것만 새 공지로 인식
+    new_list = [n for n in notices if str(n.id).strip() not in seen]
+
+    # 오래된 것부터 보내고 싶으면 ID 오름차순으로 정렬
+    try:
+        new_list.sort(key=lambda n: int(str(n.id)))
+    except ValueError:
+        pass
+
+    LOGGER.info(
+        "전체 공지 %d개 중 새 공지 %d개",
+        len(notices),
+        len(new_list),
+    )
+
+    return new_list
