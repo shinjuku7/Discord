@@ -45,6 +45,7 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001
         LOGGER.error("Failed to parse notices: %s", exc)
         return 1
+        LOGGER.info("공지 페이지에서 읽어온 공지 수 : %d",len(notices))
 
     new_notices = diff_new_notices(notices, seen_ids)
     if not new_notices:
