@@ -12,13 +12,15 @@ from .models import Notice
 
 LOGGER = logging.getLogger(__name__)
 
-STATE_PATH = Path(__file__).with_name("state.json")
+# 프로젝트 루트의 state.json을 기본으로 사용해 기존 동작과 호환 유지
+STATE_PATH = Path(__file__).resolve().parent.parent / "state.json"
 
 
-def load_seen_ids() -> Set[str]:
+def load_seen_ids(path: str | Path | None = None) -> Set[str]:
     """state.json에서 이미 본 공지 ID 집합을 읽어옵니다."""
+    state_path = Path(path) if path is not None else STATE_PATH
     try:
-        raw = STATE_PATH.read_text(encoding="utf-8")
+        raw = state_path.read_text(encoding="utf-8")
     except FileNotFoundError:
         LOGGER.info("state.json 없음 -> 빈 seen_ids로 시작")
         return set()
@@ -34,9 +36,12 @@ def load_seen_ids() -> Set[str]:
     return {str(x).strip() for x in ids}
 
 
-def save_seen_ids(seen_ids: Iterable[str], max_size: int = 100) -> None:
+def save_seen_ids(
+    seen_ids: Iterable[str], *, path: str | Path | None = None, max_size: int = 100
+) -> None:
     """seen_ids를 state.json에 저장합니다. 너무 많으면 최신 ID 위주로 자릅니다."""
     ids_set = {str(x).strip() for x in seen_ids}
+    state_path = Path(path) if path is not None else STATE_PATH
 
     # 숫자로 정렬이 가능하면 숫자 기준 내림차순
     try:
@@ -47,7 +52,7 @@ def save_seen_ids(seen_ids: Iterable[str], max_size: int = 100) -> None:
     trimmed = sorted_ids[:max_size]
 
     data = {"seen_ids": trimmed}
-    STATE_PATH.write_text(
+    state_path.write_text(
         json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
