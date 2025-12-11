@@ -37,7 +37,7 @@ def _post_with_rate_limit(webhook_url: str, payload: dict) -> None:
 
 def _build_embed(notice: Notice) -> dict:
     """공지 정보를 디스코드 임베드 형태로 변환."""
-    title_prefix = "학사공지"
+    title_prefix = notice.category if notice.category else "전체공지"
     embed = {
         "title": f"[{title_prefix}] {notice.title}",
         "url": notice.url,

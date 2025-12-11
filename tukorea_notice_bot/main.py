@@ -47,7 +47,12 @@ def main() -> int:
         return 1
     LOGGER.info("공지 페이지에서 읽어온 공지 수 : %d", len(notices))
 
-    new_notices = diff_new_notices(notices, seen_ids)
+    new_notices = diff_new_notices(
+        notices,
+        seen_ids,
+        filter_by_date=settings.filter_by_date,
+        date_range_days=settings.date_range_days,
+    )
     if not new_notices:
         LOGGER.info("새 공지 0개, 아무것도 안 함")
         return 0
