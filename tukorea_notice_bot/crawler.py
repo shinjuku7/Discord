@@ -64,11 +64,43 @@ def _extract_notice_id(href: str) -> str | None:
     return None
 
 
+DATE_PATTERN = re.compile(r"(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})")
+
+
+def _extract_date_from_text(text: str) -> datetime.date | None:
+    """텍스트에서 날짜 패턴을 찾아 추출합니다."""
+    match = DATE_PATTERN.search(text)
+    if match:
+        try:
+            year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            return datetime(year, month, day).date()
+        except ValueError:
+            pass
+    return None
+
+
 def _parse_date(date_text: str) -> datetime.date:
-    try:
-        return datetime.strptime(date_text.strip(), "%Y.%m.%d").date()
-    except ValueError as exc:
-        raise ValueError(f"Unexpected date format: {date_text}") from exc
+    """다양한 날짜 포맷을 파싱합니다."""
+    text = date_text.strip()
+    formats = [
+        "%Y.%m.%d",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%y.%m.%d",
+        "%y-%m-%d",
+        "%m.%d",  # 올해로 가정
+        "%m-%d",
+    ]
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(text, fmt)
+            # %m.%d 같은 경우 올해로 설정
+            if parsed.year == 1900:
+                parsed = parsed.replace(year=datetime.now().year)
+            return parsed.date()
+        except ValueError:
+            continue
+    raise ValueError(f"Unexpected date format: {date_text}")
 
 
 def _parse_views(text: str) -> int | None:
@@ -136,16 +168,77 @@ def _has_attachment(row) -> bool:
     return False
 
 
+def _find_notice_rows(soup: BeautifulSoup) -> List:
+    """다양한 HTML 구조에서 공지 행을 찾습니다."""
+    # 1) tbody > tr (기본)
+    tbody = soup.find("tbody")
+    if tbody:
+        rows = tbody.find_all("tr")
+        if rows:
+            LOGGER.debug("Found %d rows in tbody", len(rows))
+            return rows
+
+    # 2) table > tr (tbody 없는 경우)
+    table = soup.find("table", class_=lambda c: c and any(
+        k in (c if isinstance(c, str) else " ".join(c))
+        for k in ("board", "list", "notice", "bbs")
+    ))
+    if table:
+        rows = table.find_all("tr")
+        # 헤더 행 제외 (th가 있는 행)
+        rows = [r for r in rows if not r.find("th")]
+        if rows:
+            LOGGER.debug("Found %d rows in table (no tbody)", len(rows))
+            return rows
+
+    # 3) ul.board-list > li 구조
+    ul = soup.find("ul", class_=lambda c: c and any(
+        k in (c if isinstance(c, str) else " ".join(c))
+        for k in ("board", "list", "notice", "bbs")
+    ))
+    if ul:
+        rows = ul.find_all("li")
+        if rows:
+            LOGGER.debug("Found %d items in ul list", len(rows))
+            return rows
+
+    # 4) div 기반 리스트
+    div_list = soup.find("div", class_=lambda c: c and any(
+        k in (c if isinstance(c, str) else " ".join(c))
+        for k in ("board-list", "notice-list", "bbs-list")
+    ))
+    if div_list:
+        rows = div_list.find_all("div", class_=lambda c: c and any(
+            k in (c if isinstance(c, str) else " ".join(c))
+            for k in ("item", "row", "tr")
+        ))
+        if rows:
+            LOGGER.debug("Found %d items in div list", len(rows))
+            return rows
+
+    # 5) 최후의 수단: 모든 테이블에서 tr 찾기
+    for table in soup.find_all("table"):
+        rows = table.find_all("tr")
+        rows = [r for r in rows if r.find("a", href=True) and not r.find("th")]
+        if rows:
+            LOGGER.debug("Found %d rows in fallback table search", len(rows))
+            return rows
+
+    LOGGER.warning("No notice rows found in any known HTML structure")
+    return []
+
+
 def parse_notices(html: str, base_url: str) -> List[Notice]:
     """Parse notice entries from HTML into Notice objects."""
     soup = BeautifulSoup(html, "html.parser")
-    tbody = soup.find("tbody")
-    if not tbody:
-        LOGGER.warning("No <tbody> found in the notice list HTML.")
+    rows = _find_notice_rows(soup)
+
+    if not rows:
+        LOGGER.warning("No notice rows found in the HTML.")
         return []
 
     notices: list[Notice] = []
-    for row in tbody.find_all("tr"):
+    for row in rows:
         link = row.find("a", href=True)
         if not link:
             LOGGER.debug("Skipping row without link: %s", row)
@@ -157,16 +250,31 @@ def parse_notices(html: str, base_url: str) -> List[Notice]:
             LOGGER.warning("Failed to extract notice id from href: %s", href)
             continue
 
+        # td 또는 span/div 등에서 정보 추출
         cells = row.find_all("td")
+        if not cells:
+            cells = row.find_all(["span", "div", "dd"])
+
         title = link.get_text(strip=True)
         url = urljoin(base_url, href)
         category = _extract_category(row, cells)
-        writer = _extract_writer(cells)
+        writer = _extract_writer(cells) if cells else ""
 
         date_cell = _extract_date_cell(cells)
-        if not date_cell:
-            raise ValueError(f"Date cell missing for notice {notice_id}")
-        date_value = _parse_date(date_cell.get_text(strip=True))
+        date_value = None
+        if date_cell:
+            try:
+                date_value = _parse_date(date_cell.get_text(strip=True))
+            except ValueError:
+                LOGGER.debug("Failed to parse date for notice %s", notice_id)
+
+        # 날짜를 못 찾으면 row 전체 텍스트에서 날짜 패턴 찾기
+        if date_value is None:
+            date_value = _extract_date_from_text(row.get_text())
+
+        if date_value is None:
+            LOGGER.warning("Date not found for notice %s, using today", notice_id)
+            date_value = datetime.now().date()
 
         views_cell = _extract_views_cell(cells)
         views_value = _parse_views(views_cell.get_text(strip=True)) if views_cell else None
