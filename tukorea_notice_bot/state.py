@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Iterable, Collection, List, Set
+from typing import Iterable, Collection, List, Optional, Set
 
 from .models import Notice
 
@@ -62,12 +63,53 @@ def save_seen_ids(
 def diff_new_notices(
     notices: List[Notice],
     seen_ids: Collection[str],
+    *,
+    filter_by_date: bool = False,
+    date_range_days: int = 1,
+    reference_date: Optional[date] = None,
 ) -> List[Notice]:
-    """공지 리스트에서 '새로운' 공지만 골라냅니다."""
-    seen = {str(x).strip() for x in seen_ids}
+    """공지 리스트에서 '새로운' 공지만 골라냅니다.
 
-    # 아직 seen_ids에 없는 것만 새 공지로 인식
-    new_list = [n for n in notices if str(n.id).strip() not in seen]
+    Args:
+        notices: 크롤링한 공지 리스트
+        seen_ids: 이미 본 공지 ID 집합
+        filter_by_date: True면 날짜 기반 필터링도 적용
+        date_range_days: 오늘로부터 며칠 이내 공지만 포함 (기본 1일)
+        reference_date: 기준 날짜 (기본값: 오늘)
+
+    Returns:
+        새 공지 리스트 (ID 오름차순 정렬)
+    """
+    seen = {str(x).strip() for x in seen_ids}
+    today = reference_date or date.today()
+    cutoff_date = today - timedelta(days=date_range_days - 1)
+
+    new_list: List[Notice] = []
+    for n in notices:
+        notice_id = str(n.id).strip()
+
+        # seen_ids 체크
+        if notice_id in seen:
+            LOGGER.debug("공지 ID %s: 이미 본 공지 -> 스킵", notice_id)
+            continue
+
+        # 날짜 필터링 (옵션)
+        if filter_by_date and n.date < cutoff_date:
+            LOGGER.debug(
+                "공지 ID %s: 날짜 %s가 기준일 %s 이전 -> 스킵",
+                notice_id,
+                n.date,
+                cutoff_date,
+            )
+            continue
+
+        LOGGER.debug(
+            "공지 ID %s: 새 공지로 인식 (제목: %s, 날짜: %s)",
+            notice_id,
+            n.title[:20] if len(n.title) > 20 else n.title,
+            n.date,
+        )
+        new_list.append(n)
 
     # 오래된 것부터 보내고 싶으면 ID 오름차순으로 정렬
     try:
@@ -76,9 +118,12 @@ def diff_new_notices(
         pass
 
     LOGGER.info(
-        "전체 공지 %d개 중 새 공지 %d개",
+        "전체 공지 %d개, seen_ids %d개, 새 공지 %d개 (날짜필터=%s, 기준일=%s)",
         len(notices),
+        len(seen),
         len(new_list),
+        filter_by_date,
+        cutoff_date if filter_by_date else "N/A",
     )
 
     return new_list

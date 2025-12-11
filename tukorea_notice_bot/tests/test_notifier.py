@@ -39,7 +39,7 @@ def test_send_discord_message_builds_payload(monkeypatch):
 
     assert captured["url"] == webhook_url
     embed = captured["json"]["embeds"][0]
-    assert embed["title"] == "[학사공지] 테스트 공지"
+    assert embed["title"] == "[일반공지] 테스트 공지"
     assert embed["url"] == "https://example.com/notice/1"
     assert "일반공지" in embed["description"]
     assert "조회수 42" in embed["footer"]["text"]
@@ -80,5 +80,5 @@ def test_notify_new_notices_sends_in_order(monkeypatch):
 
     notifier.notify_new_notices("https://example.com/webhook", notices)
 
-    assert calls == ["[학사공지] 첫 공지", "[학사공지] 둘째 공지"]
+    assert calls == ["[일반공지] 첫 공지", "[장학공지] 둘째 공지"]
 
