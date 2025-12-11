@@ -27,6 +27,16 @@ SAMPLE_HTML = """
       <td class="date">2024.04.30</td>
       <td class="views">-</td>
     </tr>
+    <tr>
+      <td class="no">3</td>
+      <td class="category">학사공지</td>
+      <td class="title">
+        <a href="/bbs/tukorea/107/artclView.do?article=145433">세 번째 공지</a>
+      </td>
+      <td class="writer">교무팀</td>
+      <td class="date">2024.04.29</td>
+      <td class="views">321</td>
+    </tr>
   </tbody>
 </table>
 """
@@ -37,9 +47,9 @@ def test_parse_notices_extracts_fields():
 
     notices = parse_notices(SAMPLE_HTML, base_url)
 
-    assert len(notices) == 2
+    assert len(notices) == 3
 
-    first, second = notices
+    first, second, third = notices
 
     assert first.id == "145435"
     assert first.title == "첫 번째 공지"
@@ -64,4 +74,12 @@ def test_parse_notices_extracts_fields():
     assert second.date == date(2024, 4, 30)
     assert second.views is None
     assert second.has_attachment is False
+
+    assert third.id == "145433"
+    assert third.title == "세 번째 공지"
+    assert (
+        third.url
+        == "https://www.tukorea.ac.kr/bbs/tukorea/107/artclView.do?article=145433"
+    )
+    assert third.views == 321
 
