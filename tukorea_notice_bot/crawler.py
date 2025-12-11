@@ -6,7 +6,7 @@ import logging
 import re
 from datetime import datetime
 from typing import List
-from urllib.parse import urljoin
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -29,6 +29,45 @@ def fetch_html(url: str) -> str:
     response = requests.get(url, headers=headers, timeout=10)
     response.raise_for_status()
     return response.text
+
+
+def _extract_notice_id(href: str) -> str | None:
+    """Extract notice id from various href formats.
+
+    Supports the legacy `/123/artclView.do` pattern as well as query strings like
+    `artclView.do?article=123` or `artclView.do?idx=123`.
+    """
+
+    parsed = urlparse(href)
+
+    # 1) query string values
+    query_params = parse_qs(parsed.query)
+    for key, values in query_params.items():
+        lowered = key.lower()
+        if any(token in lowered for token in ("artcl", "article", "id", "idx", "no", "seq")):
+            for value in values:
+                candidate = value.strip()
+                if candidate.isdigit():
+                    return candidate
+
+    # 2) original /<id>/artclView.do pattern
+    match = NOTICE_ID_PATTERN.search(href)
+    if match:
+        return match.group(1)
+
+    # 3) any numeric chunk within the href (e.g., javascript:fnView('145600', ...))
+    digit_chunks = re.findall(r"\d{5,}", href)
+    if digit_chunks:
+        # 기사 번호가 가장 먼저 등장하는 경우가 많으므로 첫 번째 추출값을 우선 사용
+        return digit_chunks[0]
+
+    # 4) trailing path segments (length>=5 to avoid board ids like "107")
+    digit_segments = [seg for seg in parsed.path.split("/") if seg.isdigit() and len(seg) >= 5]
+    if digit_segments:
+        # pick the longest numeric segment to avoid board ids like "107"
+        return max(digit_segments, key=len)
+
+    return None
 
 
 def _parse_date(date_text: str) -> datetime.date:
@@ -119,11 +158,10 @@ def parse_notices(html: str, base_url: str) -> List[Notice]:
             continue
 
         href = link["href"].strip()
-        id_match = NOTICE_ID_PATTERN.search(href)
-        if not id_match:
+        notice_id = _extract_notice_id(href)
+        if notice_id is None:
             LOGGER.warning("Failed to extract notice id from href: %s", href)
             continue
-        notice_id = id_match.group(1)
 
         cells = row.find_all("td")
         title = link.get_text(strip=True)
