@@ -139,12 +139,105 @@ def _has_attachment(row) -> bool:
 def parse_notices(html: str, base_url: str) -> List[Notice]:
     """Parse notice entries from HTML into Notice objects."""
     soup = BeautifulSoup(html, "html.parser")
-    tbody = soup.find("tbody")
-    if not tbody:
-        LOGGER.warning("No <tbody> found in the notice list HTML.")
-        return []
 
+    # 새 구조: ul.list-normal > li
+    ul = soup.find("ul", class_="list-normal")
+    if ul:
+        return _parse_list_normal(ul, base_url)
+
+    # 기존 구조: tbody > tr (fallback)
+    tbody = soup.find("tbody")
+    if tbody:
+        return _parse_tbody(tbody, base_url)
+
+    LOGGER.warning("No <ul class='list-normal'> or <tbody> found in HTML.")
+    return []
+
+
+def _parse_list_normal(ul, base_url: str) -> List[Notice]:
+    """Parse notices from ul.list-normal structure."""
     notices: list[Notice] = []
+
+    for li in ul.find_all("li"):
+        link = li.find("a", href=True)
+        if not link:
+            continue
+
+        href = link["href"].strip()
+        notice_id = _extract_notice_id(href)
+        if notice_id is None:
+            LOGGER.warning("Failed to extract notice id from href: %s", href)
+            continue
+
+        # 제목: .title strong
+        title_tag = li.find("div", class_="title")
+        title = ""
+        if title_tag:
+            strong = title_tag.find("strong")
+            title = strong.get_text(strip=True) if strong else title_tag.get_text(strip=True)
+
+        url = urljoin(base_url, href)
+
+        # desc 영역에서 정보 추출
+        desc = li.find("div", class_="desc")
+        writer = ""
+        date_value = None
+        views_value = None
+
+        if desc:
+            # 작성자: dl.writer dd
+            writer_dl = desc.find("dl", class_="writer")
+            if writer_dl:
+                dd = writer_dl.find("dd")
+                writer = dd.get_text(strip=True) if dd else ""
+
+            # 날짜: dl.date dd
+            date_dl = desc.find("dl", class_="date")
+            if date_dl:
+                dd = date_dl.find("dd")
+                if dd:
+                    date_value = _parse_date(dd.get_text(strip=True))
+
+            # 조회수: dl.count dd
+            count_dl = desc.find("dl", class_="count")
+            if count_dl:
+                dd = count_dl.find("dd")
+                if dd:
+                    views_value = _parse_views(dd.get_text(strip=True))
+
+            # 첨부파일: span.file-count
+            file_count = desc.find("span", class_="file-count")
+            has_attachment = False
+            if file_count:
+                count_text = file_count.get_text(strip=True)
+                has_attachment = count_text.isdigit() and int(count_text) > 0
+        else:
+            has_attachment = False
+
+        if date_value is None:
+            LOGGER.warning("Date missing for notice %s, skipping", notice_id)
+            continue
+
+        notices.append(
+            Notice(
+                id=notice_id,
+                title=title,
+                url=url,
+                category="",
+                writer=writer,
+                date=date_value,
+                views=views_value,
+                has_attachment=has_attachment,
+            )
+        )
+
+    return notices
+
+
+def _parse_tbody(tbody, base_url: str) -> List[Notice]:
+    """Parse notices from tbody > tr structure (legacy)."""
+    notices: list[Notice] = []
+
     for row in tbody.find_all("tr"):
         link = row.find("a", href=True)
         if not link:
