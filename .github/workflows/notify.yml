@@ -25,6 +25,7 @@ jobs:
       - name: Run notifier
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          FILTER_BY_DATE: "false"
         run: python -m tukorea_notice_bot.main
 
       - name: Commit state.json if changed
